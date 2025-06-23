@@ -50,7 +50,7 @@ def generate_excel(data, filename='invoice.xlsx'):
 
 # 🖥️ Streamlit UI
 st.set_page_config(page_title="Invoice Extractor Pro", page_icon="📑")
-st.title("📑 Multi-format Invoice Extractor")
+st.title("📑 Invoice Extractor")
 
 uploaded_file = st.file_uploader("Upload a JPG/PNG image or PDF invoice", type=["jpg", "jpeg", "png", "pdf"])
 
