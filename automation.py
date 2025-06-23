@@ -64,16 +64,16 @@ if uploaded_file:
     for label, value in extracted_fields.items():
         st.markdown(f"**{label}:** {value}")
 
-    confirm = st.checkbox("✅ I confirm the extracted details are correct and I want to download this invoice")
+    st.markdown("👇 Press the button below if everything looks correct to save and download this invoice.")
 
-    if confirm:
+    if st.button("✅ Confirm & Download Invoice"):
         generate_excel(extracted_fields, "invoice.xlsx")
-        st.success("📄 Invoice prepared successfully!")
+        st.success("📄 Invoice generated!")
 
         with open("invoice.xlsx", "rb") as file:
-            st.download_button("⬇️ Download This Invoice", file, file_name="invoice.xlsx")
+            st.download_button("⬇️ Download Invoice", file, file_name="invoice.xlsx")
     else:
-        st.info("👀 Please confirm the details above before downloading.")
+        st.info("Waiting for you to confirm before saving or downloading.")
 
     with st.expander("📜 View Full OCR Text"):
         st.text(ocr_text)
