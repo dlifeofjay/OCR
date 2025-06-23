@@ -7,7 +7,7 @@ import pandas as pd
 import os
 
 # 🛠️ Tesseract Path (UPDATE this if needed)
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+#pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 # 🔧 Preprocessing Function
 def preprocess_image(image_bytes):
