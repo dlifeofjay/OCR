@@ -5,8 +5,11 @@ import numpy as np
 import re
 import pandas as pd
 import os
+import io
+from pdf2image import convert_from_bytes
+from PIL import Image
 
-# 🔧 Preprocess image before OCR
+# 🔧 Preprocess image for OCR
 def preprocess_image(image_bytes):
     image_array = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
@@ -21,7 +24,7 @@ def extract_text(img):
     except Exception as e:
         return f"OCR failed: {e}"
 
-# 📥 Parse invoice fields from extracted text
+# 📥 Parse invoice fields
 def parse_fields(text):
     fields = {}
     inv = re.search(r'Invoice No[:\s]*([A-Z0-9-]+)', text, re.IGNORECASE)
@@ -40,40 +43,54 @@ def parse_fields(text):
 
     return fields
 
-# 💾 Generate a downloadable Excel file for just one invoice
+# 💾 Export to Excel
 def generate_excel(data, filename='invoice.xlsx'):
-    df = pd.DataFrame([data])
+    df = pd.DataFrame(data)
     df.to_excel(filename, index=False)
 
-# 🖥️ Streamlit interface
-st.set_page_config(page_title="Invoice Extractor", page_icon="📄")
-st.title("📄 Invoice Data Extractor")
+# 🖥️ Streamlit UI
+st.set_page_config(page_title="Invoice Extractor Pro", page_icon="📑")
+st.title("📑 Multi-format Invoice Extractor")
 
-uploaded_file = st.file_uploader("Upload an invoice image (JPG/PNG)", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Upload a JPG/PNG image or PDF invoice", type=["jpg", "jpeg", "png", "pdf"])
 
 if uploaded_file:
-    st.image(uploaded_file, caption="Uploaded Invoice", use_column_width=True)
-    st.write("🔄 Processing image...")
+    st.write("🔄 Processing file...")
+    extracted_data = []
+    full_text = ""
 
-    img_bytes = uploaded_file.read()
-    processed_img = preprocess_image(img_bytes)
-    ocr_text = extract_text(processed_img)
-    extracted_fields = parse_fields(ocr_text)
+    if uploaded_file.type == "application/pdf":
+        images = convert_from_bytes(uploaded_file.read())
+        for i, page_img in enumerate(images):
+            img_byte_arr = io.BytesIO()
+            page_img.save(img_byte_arr, format='PNG')
+            processed_img = preprocess_image(img_byte_arr.getvalue())
+            ocr_text = extract_text(processed_img)
+            fields = parse_fields(ocr_text)
+            extracted_data.append(fields)
+            full_text += f"\n--- Page {i+1} ---\n{ocr_text}"
+    else:
+        img_bytes = uploaded_file.read()
+        processed_img = preprocess_image(img_bytes)
+        ocr_text = extract_text(processed_img)
+        fields = parse_fields(ocr_text)
+        extracted_data.append(fields)
+        full_text = ocr_text
 
     st.subheader("📋 Extracted Invoice Info")
-    for label, value in extracted_fields.items():
-        st.markdown(f"**{label}:** {value}")
+    for i, invoice in enumerate(extracted_data):
+        st.markdown(f"### Invoice {i+1}")
+        for label, value in invoice.items():
+            st.markdown(f"**{label}:** {value}")
 
-    st.markdown("👇 Press the button below if everything looks correct to save and download this invoice.")
+    if st.button("✅ Confirm & Download All"):
+        generate_excel(extracted_data, "invoices.xlsx")
+        st.success("✅ Invoice file ready!")
 
-    if st.button("✅ Confirm & Download Invoice"):
-        generate_excel(extracted_fields, "invoice.xlsx")
-        st.success("📄 Invoice generated!")
-
-        with open("invoice.xlsx", "rb") as file:
-            st.download_button("⬇️ Download Invoice", file, file_name="invoice.xlsx")
+        with open("invoices.xlsx", "rb") as file:
+            st.download_button("⬇️ Download Excel File", file, file_name="invoices.xlsx")
     else:
-        st.info("Waiting for you to confirm before saving or downloading.")
+        st.info("Press the button to export.")
 
     with st.expander("📜 View Full OCR Text"):
-        st.text(ocr_text)
+        st.text(full_text)
