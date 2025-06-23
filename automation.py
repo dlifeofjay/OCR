@@ -6,10 +6,7 @@ import re
 import pandas as pd
 import os
 
-# 🛠️ Tesseract Path (UPDATE this if needed)
-#pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
-# 🔧 Preprocessing Function
+# 🔧 Preprocess uploaded image for OCR
 def preprocess_image(image_bytes):
     image_array = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
@@ -17,11 +14,14 @@ def preprocess_image(image_bytes):
     thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)[1]
     return thresh
 
-# 🔍 OCR Extraction
+# 🔍 Extract text using Tesseract
 def extract_text(img):
-    return pytesseract.image_to_string(img)
+    try:
+        return pytesseract.image_to_string(img)
+    except Exception as e:
+        return f"OCR failed: {e}"
 
-# 📤 Pattern Matching
+# 📥 Extract key invoice fields from OCR text
 def parse_fields(text):
     fields = {}
     inv = re.search(r'Invoice No[:\s]*([A-Z0-9-]+)', text, re.IGNORECASE)
@@ -30,25 +30,28 @@ def parse_fields(text):
     address = re.search(r'Address[:\s]*(.*)', text)
     item = re.search(r'Item[:\s]*(.*)', text)
     amount = re.search(r'Amount[:\s]*([\d,.]+)', text)
-    
+
     fields['Invoice No'] = inv.group(1) if inv else np.nan
     fields['Date'] = dt.group(1) if dt else np.nan
     fields['Billed To'] = billed_to.group(1) if billed_to else np.nan
     fields['Address'] = address.group(1) if address else np.nan
     fields['Item'] = item.group(1) if item else np.nan
     fields['Amount'] = amount.group(1) if amount else np.nan
-    
+
     return fields
 
-# 💾 Save Extracted Data to Excel
+# 💾 Save extracted data to Excel
 def save_to_excel(data, filename='invoices.xlsx'):
     df = pd.DataFrame([data])
     if os.path.exists(filename):
-        existing = pd.read_excel(filename)
-        df = pd.concat([existing, df], ignore_index=True)
+        try:
+            existing = pd.read_excel(filename)
+            df = pd.concat([existing, df], ignore_index=True)
+        except Exception:
+            pass  # Start fresh if file is unreadable
     df.to_excel(filename, index=False)
 
-# 🖥️ Streamlit App
+# 🌐 Streamlit app layout
 st.set_page_config(page_title="Invoice Extractor", page_icon="📄")
 st.title("📄 Invoice Data Extractor")
 
@@ -68,7 +71,14 @@ if uploaded_file is not None:
         st.markdown(f"**{label}:** {value}")
 
     save_to_excel(extracted_fields)
-    st.success("✅ Data saved to *invoices.xlsx*")
+    st.success("✅ Invoice info added to *invoices.xlsx*")
+
+    st.markdown(
+        "📥 **Tip:** Upload more invoices and tap the download button below to get the updated Excel file every time."
+    )
+
+    with open("invoices.xlsx", "rb") as file:
+        st.download_button("⬇️ Download Excel File", file, file_name="invoices.xlsx")
 
     with st.expander("📜 Full OCR Output"):
         st.text(ocr_text)
