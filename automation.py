@@ -1,15 +1,22 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
+import io
+import re
+from datetime import datetime
 import pytesseract
 import cv2
-import numpy as np
-import re
-import pandas as pd
-import os
-import io
 from pdf2image import convert_from_bytes
 from PIL import Image
 
-# 🔧 Preprocess image for OCR
+st.set_page_config(page_title="Invoice Extractor Pro", page_icon="📄")
+
+st.title("📄 Invoice Data Extractor")
+st.write("Upload an invoice to extract key fields and download as CSV")
+
+DATA_FILE = "invoice_data.csv"
+
+# OCR + Preprocessing
 def preprocess_image(image_bytes):
     image_array = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
@@ -17,80 +24,64 @@ def preprocess_image(image_bytes):
     thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)[1]
     return thresh
 
-# 🔍 Extract text using pytesseract
 def extract_text(img):
-    try:
-        return pytesseract.image_to_string(img)
-    except Exception as e:
-        return f"OCR failed: {e}"
+    return pytesseract.image_to_string(img, config='--psm 6')
 
-# 📥 Parse invoice fields
 def parse_fields(text):
-    fields = {}
-    inv = re.search(r'Invoice No[:\s]*([A-Z0-9-]+)', text, re.IGNORECASE)
-    dt = re.search(r'Date[:\s]*([\d/\-]+)', text)
-    billed_to = re.search(r'Billed To[:\s]*(.*)', text)
-    address = re.search(r'Address[:\s]*(.*)', text)
-    item = re.search(r'Item[:\s]*(.*)', text)
-    amount = re.search(r'Amount[:\s]*([\d,.]+)', text)
+    def get(pattern):
+        match = re.search(pattern, text, re.IGNORECASE)
+        return match.group(1).strip() if match else np.nan
 
-    fields['Invoice No'] = inv.group(1) if inv else np.nan
-    fields['Date'] = dt.group(1) if dt else np.nan
-    fields['Billed To'] = billed_to.group(1) if billed_to else np.nan
-    fields['Address'] = address.group(1) if address else np.nan
-    fields['Item'] = item.group(1) if item else np.nan
-    fields['Amount'] = amount.group(1) if amount else np.nan
+    return {
+        'Invoice No': get(r'Invoice No[:\s]*([A-Z0-9-]+)'),
+        'Date': get(r'Date[:\s]*([\d/\-]+)'),
+        'Billed To': get(r'Billed To[:\s]*(.+)'),
+        'Address': get(r'Address[:\s]*(.+)'),
+        'Item': get(r'Item[:\s]*(.+)'),
+        'Amount': get(r'Amount[:\s]*([\d,.]+)'),
+        'Timestamp': datetime.now()
+    }
 
-    return fields
+# Load existing or create empty DataFrame
+try:
+    df = pd.read_csv(DATA_FILE)
+except FileNotFoundError:
+    df = pd.DataFrame(columns=['Invoice No', 'Date', 'Billed To', 'Address', 'Item', 'Amount', 'Timestamp'])
 
-# 💾 Export to Excel
-def generate_excel(data, filename='invoice.xlsx'):
-    df = pd.DataFrame(data)
-    df.to_excel(filename, index=False)
-
-# 🖥️ Streamlit UI
-st.set_page_config(page_title="Invoice Extractor Pro", page_icon="📑")
-st.title("📑 Invoice Extractor")
-
-uploaded_file = st.file_uploader("Upload a JPG/PNG image or PDF invoice", type=["jpg", "jpeg", "png", "pdf"])
+uploaded_file = st.file_uploader("📎 Upload invoice (PDF or image)", type=["pdf", "jpg", "jpeg", "png"])
 
 if uploaded_file:
-    st.write("🔄 Processing file...")
+    file_bytes = uploaded_file.read()
     extracted_data = []
-    full_text = ""
 
     if uploaded_file.type == "application/pdf":
-        images = convert_from_bytes(uploaded_file.read())
-        for i, page_img in enumerate(images):
-            img_byte_arr = io.BytesIO()
-            page_img.save(img_byte_arr, format='PNG')
-            processed_img = preprocess_image(img_byte_arr.getvalue())
-            ocr_text = extract_text(processed_img)
-            fields = parse_fields(ocr_text)
-            extracted_data.append(fields)
-            full_text += f"\n--- Page {i+1} ---\n{ocr_text}"
+        pages = convert_from_bytes(file_bytes)
+        for page in pages:
+            img_buf = io.BytesIO()
+            page.save(img_buf, format="PNG")
+            img = preprocess_image(img_buf.getvalue())
+            text = extract_text(img)
+            extracted_data.append(parse_fields(text))
     else:
-        img_bytes = uploaded_file.read()
-        processed_img = preprocess_image(img_bytes)
-        ocr_text = extract_text(processed_img)
-        fields = parse_fields(ocr_text)
-        extracted_data.append(fields)
-        full_text = ocr_text
+        img = preprocess_image(file_bytes)
+        text = extract_text(img)
+        extracted_data.append(parse_fields(text))
 
-    st.subheader("📋 Extracted Invoice Info")
-    for i, invoice in enumerate(extracted_data):
-        st.markdown(f"### Invoice {i+1}")
-        for label, value in invoice.items():
-            st.markdown(f"**{label}:** {value}")
+    # Show predictions
+    for i, data in enumerate(extracted_data):
+        st.markdown(f"### 📋 Invoice {i+1}")
+        for key, val in data.items():
+            st.write(f"**{key}**: {val}")
 
-    if st.button("✅ Confirm & Download All"):
-        generate_excel(extracted_data, "invoices.xlsx")
-        st.success("✅ Invoice file ready!")
+        df = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
 
-        with open("invoices.xlsx", "rb") as file:
-            st.download_button("⬇️ Download Excel File", file, file_name="invoices.xlsx")
-    else:
-        st.info("Press the button to export.")
+    df.to_csv(DATA_FILE, index=False)
+    st.success("✅ Invoices processed and saved!")
 
-    with st.expander("📜 View Full OCR Text"):
-        st.text(full_text)
+if st.checkbox("📊 Show extracted data"):
+    st.dataframe(df)
+
+if st.button("⬇️ Download All as CSV"):
+    csv_io = io.StringIO()
+    df.to_csv(csv_io, index=False)
+    st.download_button("Download CSV", csv_io.getvalue(), file_name="invoice_data.csv", mime="text/csv")
