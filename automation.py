@@ -6,7 +6,7 @@ import re
 import pandas as pd
 import os
 
-# 🔧 Preprocess uploaded image for OCR
+# 🔧 Preprocess image before OCR
 def preprocess_image(image_bytes):
     image_array = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
@@ -14,14 +14,14 @@ def preprocess_image(image_bytes):
     thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)[1]
     return thresh
 
-# 🔍 Extract text using Tesseract
+# 🔍 Extract text using pytesseract
 def extract_text(img):
     try:
         return pytesseract.image_to_string(img)
     except Exception as e:
         return f"OCR failed: {e}"
 
-# 📥 Extract key invoice fields from OCR text
+# 📥 Parse invoice fields from extracted text
 def parse_fields(text):
     fields = {}
     inv = re.search(r'Invoice No[:\s]*([A-Z0-9-]+)', text, re.IGNORECASE)
@@ -40,45 +40,40 @@ def parse_fields(text):
 
     return fields
 
-# 💾 Save extracted data to Excel
-def save_to_excel(data, filename='invoices.xlsx'):
+# 💾 Generate a downloadable Excel file for just one invoice
+def generate_excel(data, filename='invoice.xlsx'):
     df = pd.DataFrame([data])
-    if os.path.exists(filename):
-        try:
-            existing = pd.read_excel(filename)
-            df = pd.concat([existing, df], ignore_index=True)
-        except Exception:
-            pass  # Start fresh if file is unreadable
     df.to_excel(filename, index=False)
 
-# 🌐 Streamlit app layout
+# 🖥️ Streamlit interface
 st.set_page_config(page_title="Invoice Extractor", page_icon="📄")
 st.title("📄 Invoice Data Extractor")
 
 uploaded_file = st.file_uploader("Upload an invoice image (JPG/PNG)", type=["jpg", "jpeg", "png"])
 
-if uploaded_file is not None:
+if uploaded_file:
     st.image(uploaded_file, caption="Uploaded Invoice", use_column_width=True)
-    st.write("🔄 Processing...")
+    st.write("🔄 Processing image...")
 
     img_bytes = uploaded_file.read()
     processed_img = preprocess_image(img_bytes)
     ocr_text = extract_text(processed_img)
     extracted_fields = parse_fields(ocr_text)
 
-    st.subheader("📋 Extracted Fields")
+    st.subheader("📋 Extracted Invoice Info")
     for label, value in extracted_fields.items():
         st.markdown(f"**{label}:** {value}")
 
-    save_to_excel(extracted_fields)
-    st.success("✅ Invoice info added to *invoices.xlsx*")
+    confirm = st.checkbox("✅ I confirm the extracted details are correct and I want to download this invoice")
 
-    st.markdown(
-        "📥 **Tip:** Upload more invoices and tap the download button below to get the updated Excel file every time."
-    )
+    if confirm:
+        generate_excel(extracted_fields, "invoice.xlsx")
+        st.success("📄 Invoice prepared successfully!")
 
-    with open("invoices.xlsx", "rb") as file:
-        st.download_button("⬇️ Download Excel File", file, file_name="invoices.xlsx")
+        with open("invoice.xlsx", "rb") as file:
+            st.download_button("⬇️ Download This Invoice", file, file_name="invoice.xlsx")
+    else:
+        st.info("👀 Please confirm the details above before downloading.")
 
-    with st.expander("📜 Full OCR Output"):
+    with st.expander("📜 View Full OCR Text"):
         st.text(ocr_text)
