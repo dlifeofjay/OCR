@@ -39,39 +39,47 @@ def parse_fields(text):
         "Amount": get(r"Amount[:\s]*([\d,.]+)")
     }
 
-uploaded_file = st.file_uploader("📎 Upload invoice (PDF/Image)", type=["pdf", "jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("📎 Upload an invoice (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"])
 
 if uploaded_file:
     file_bytes = uploaded_file.read()
-    extracted = []
+    extracted_rows = []
+    full_text_log = []
 
     if uploaded_file.type == "application/pdf":
         pages = convert_from_bytes(file_bytes)
-        for page in pages:
-            buffer = io.BytesIO()
-            page.save(buffer, format="PNG")
-            img = preprocess_image(buffer.getvalue())
+        for i, page in enumerate(pages):
+            buf = io.BytesIO()
+            page.save(buf, format="PNG")
+            img = preprocess_image(buf.getvalue())
             text = extract_text(img)
-            extracted.append(parse_fields(text))
+            parsed = parse_fields(text)
+            extracted_rows.append(parsed)
+            full_text_log.append((f"Page {i+1}", text))
     else:
         img = preprocess_image(file_bytes)
         text = extract_text(img)
-        extracted.append(parse_fields(text))
+        parsed = parse_fields(text)
+        extracted_rows.append(parsed)
+        full_text_log.append(("Image", text))
 
-    new_df = pd.DataFrame(extracted)
+    st.subheader("🔍 Extracted Invoice Fields")
+    for i, row in enumerate(extracted_rows):
+        label = f"Page {i+1}" if uploaded_file.type == "application/pdf" else "Invoice Image"
+        st.markdown(f"**🧾 {label}**")
+        for key, val in row.items():
+            st.write(f"**{key}:** {val}")
 
-    st.subheader("🧾 Extracted Invoice Data")
-    st.dataframe(new_df)
-
-    if st.button("✅ Save to Excel"):
+    if st.button("✅ Yes, Save to Excel"):
+        new_df = pd.DataFrame(extracted_rows)
         try:
             existing_df = pd.read_excel(EXCEL_FILE)
         except FileNotFoundError:
             existing_df = pd.DataFrame(columns=new_df.columns)
 
-        combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-        combined_df.to_excel(EXCEL_FILE, index=False)
-        st.success("📥 Data saved to invoice.xlsx")
+        combined = pd.concat([existing_df, new_df], ignore_index=True)
+        combined.to_excel(EXCEL_FILE, index=False)
+        st.success("📥 Invoice data saved to Excel.")
 
         with open(EXCEL_FILE, "rb") as f:
             st.download_button(
@@ -80,3 +88,8 @@ if uploaded_file:
                 file_name="invoice.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+    st.subheader("📜 Full OCR Extracted Text")
+    for label, text in full_text_log:
+        with st.expander(f"📄 {label} Text"):
+            st.text(text)
