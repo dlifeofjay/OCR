@@ -14,10 +14,10 @@ st.title("📄 Invoice Extractor Pro")
 
 EXCEL_FILE = "invoice.xlsx"
 
-# OCR + Preprocessing
+# --- OCR Preprocessing ---
 def preprocess_image(image_bytes):
-    image_array = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    img_array = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)[1]
     return thresh
@@ -25,20 +25,22 @@ def preprocess_image(image_bytes):
 def extract_text(img):
     return pytesseract.image_to_string(img, config="--psm 6")
 
+# --- Field Parser ---
 def parse_fields(text):
-    def get(pattern):
+    def get(pattern, group=1):
         match = re.search(pattern, text, re.IGNORECASE)
-        return match.group(1).strip() if match else ""
+        return match.group(group).strip() if match else ""
     return {
         "Invoice No": get(r"Invoice No[:\s]*([A-Z0-9-]+)"),
         "Date": get(r"Date[:\s]*([\d/\-]+)"),
         "Billed To": get(r"Billed To[:\s]*(.+)"),
         "Address": get(r"Address[:\s]*(.+)"),
         "Item": get(r"Item[:\s]*(.+)"),
-        "Amount": get(r"Amount[:\s]*([\d,.]+)")
+        "Amount": get(r"(Total|Amount)[^\d]*([\d,]+\.?\d*)", group=2)
     }
 
-uploaded_file = st.file_uploader("📎 Upload an invoice (PDF/Image)", type=["pdf", "jpg", "jpeg", "png"])
+# --- File Upload ---
+uploaded_file = st.file_uploader("📎 Upload Invoice (PDF/Image)", type=["pdf", "jpg", "jpeg", "png"])
 
 if uploaded_file:
     file_bytes = uploaded_file.read()
@@ -52,49 +54,56 @@ if uploaded_file:
             page.save(buf, format="PNG")
             img = preprocess_image(buf.getvalue())
             text = extract_text(img)
-            row = parse_fields(text)
-            extracted_rows.append(row)
             full_texts.append((f"Page {i+1}", text))
+            extracted_rows.append(parse_fields(text))
     else:
         img = preprocess_image(file_bytes)
         text = extract_text(img)
-        row = parse_fields(text)
-        extracted_rows.append(row)
         full_texts.append(("Image", text))
+        extracted_rows.append(parse_fields(text))
 
-    st.subheader("🧾 Review & Edit Invoice Data")
-    final_rows = []
+    # --- Editable Forms for Each Page/Image ---
+    st.subheader("🔍 Review & Edit Invoice Data")
+    confirmed_rows = []
     for i, row in enumerate(extracted_rows):
         label = f"Page {i+1}" if uploaded_file.type == "application/pdf" else "Invoice Image"
         with st.form(f"form_{i}"):
-            st.markdown(f"**🔍 {label}**")
-            updated = {}
-            for key, val in row.items():
-                updated[key] = st.text_input(f"{key}", value=val, key=f"{key}_{i}")
-            submitted = st.form_submit_button("✅ Confirm This Entry")
-            if submitted:
-                st.success("Entry confirmed.")
-                final_rows.append(updated)
+            st.markdown(f"**📝 {label}**")
+            edited = {}
+            for key, value in row.items():
+                edited[key] = st.text_input(f"{key}", value=value, key=f"{key}_{i}")
+            if st.form_submit_button("✅ Confirm This Invoice"):
+                confirmed_rows.append(edited)
+                st.success(f"{label} confirmed!")
 
-    if final_rows:
-        new_df = pd.DataFrame(final_rows)
+    # --- Save & Download ---
+    if confirmed_rows:
+        new_df = pd.DataFrame(confirmed_rows)
         try:
             existing_df = pd.read_excel(EXCEL_FILE)
         except FileNotFoundError:
             existing_df = pd.DataFrame(columns=new_df.columns)
         combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-        combined_df.to_excel(EXCEL_FILE, index=False)
-        st.success("📦 Data saved to invoice.xlsx")
 
-        with open(EXCEL_FILE, "rb") as f:
-            st.download_button(
-                label="⬇️ Download invoice.xlsx",
-                data=f,
-                file_name="invoice.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        # Save to Excel
+        excel_buf = io.BytesIO()
+        combined_df.to_excel(excel_buf, index=False, engine="openpyxl")
+        excel_buf.seek(0)
+        with open(EXCEL_FILE, "wb") as f:
+            f.write(excel_buf.getvalue())
 
-    st.subheader("📜 Full OCR Extracted Text")
+        st.success("✅ Data saved to invoice.xlsx")
+
+        # Download Button
+        st.download_button(
+            label="⬇️ Download invoice.xlsx",
+            data=excel_buf,
+            file_name="invoice.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    # --- Full OCR Text ---
+    st.subheader("📜 Full OCR Text")
     for label, text in full_texts:
         with st.expander(f"📄 {label} Text"):
             st.text(text)
